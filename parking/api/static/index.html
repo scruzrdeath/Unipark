@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Campus Parking Monitor</title>
+<style>
+  :root { --bg:#f4f6f8; --card:#fff; --text:#1c2733; --muted:#6b7a89; --line:#dde3e9;
+          --free:#2e9e5b; --reserved:#e0a21b; --occupied:#d64545; --accent:#2457c5; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12171d; --card:#1b232c; --text:#e8edf2; --muted:#8fa0b0; --line:#2b3642; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.4 system-ui, sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between;
+           padding:16px; max-width:1000px; margin:0 auto; }
+  h1 { font-size:20px; margin:0; }
+  .muted { color:var(--muted); }
+  main { max-width:1000px; margin:0 auto; padding:0 16px 32px; display:grid; gap:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+  .zones { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:16px; }
+  .grid { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-top:12px; }
+  .spot { border:0; border-radius:8px; padding:12px 0; color:#fff; font-weight:600; cursor:default; }
+  .spot.FREE { background:var(--free); cursor:pointer; }
+  .spot.RESERVED { background:var(--reserved); }
+  .spot.OCCUPIED { background:var(--occupied); }
+  .legend span { margin-right:14px; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:4px; }
+  input { padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--text); }
+  button.act { padding:6px 10px; border:1px solid var(--accent); background:transparent; color:var(--accent);
+               border-radius:6px; cursor:pointer; margin-left:6px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); }
+  #msg { min-height:22px; font-weight:600; }
+  #msg.err { color:var(--occupied); } #msg.ok { color:var(--free); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Campus Parking Monitor</h1>
+  <div class="muted">Simulated time: <strong id="clock">--</strong></div>
+</header>
+<main>
+  <div class="card">
+    <label>Your user code: <input id="user" placeholder="e.g. u1001" maxlength="40"></label>
+    <span class="muted"> &nbsp;Click a green spot to reserve it.</span>
+    <div id="msg"></div>
+    <div class="legend muted">
+      <span><i class="dot" style="background:var(--free)"></i>Free</span>
+      <span><i class="dot" style="background:var(--reserved)"></i>Reserved</span>
+      <span><i class="dot" style="background:var(--occupied)"></i>Occupied</span>
+    </div>
+  </div>
+  <div class="zones" id="zones"></div>
+  <div class="card">
+    <h2 style="margin-top:0;font-size:16px">Open reservations</h2>
+    <table>
+      <thead><tr><th>User</th><th>Spot</th><th>Status</th><th>Time left (sim min)</th><th></th></tr></thead>
+      <tbody id="res"><tr><td colspan="5" class="muted">None</td></tr></tbody>
+    </table>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+try { $("user").value = localStorage.getItem("userCode") || ""; } catch (e) {}
+$("user").addEventListener("input", () => { try { localStorage.setItem("userCode", $("user").value); } catch (e) {} });
+
+function say(text, kind) { const m = $("msg"); m.textContent = text; m.className = kind || ""; }
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || ("HTTP " + res.status));
+  return body;
+}
+
+async function reserve(spotCode) {
+  const user = $("user").value.trim();
+  if (!user) { say("Type your user code first.", "err"); return; }
+  try {
+    await api("/api/reservations", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_code: user, spot_code: spotCode }) });
+    say("Spot " + spotCode + " reserved.", "ok");
+  } catch (e) { say(e.message, "err"); }
+  refresh();
+}
+
+async function act(id, what) {
+  try { await api("/api/reservations/" + id + "/" + what, { method: "POST" }); say("Done: " + what, "ok"); }
+  catch (e) { say(e.message, "err"); }
+  refresh();
+}
+
+function renderMap(data) {
+  $("clock").textContent = data.simulated_time.replace("T", " ").slice(0, 19);
+  $("zones").innerHTML = "";
+  for (const z of data.zones) {
+    const card = document.createElement("div");
+    card.className = "card";
+    card.innerHTML = "<strong>Zone " + z.zone + "</strong> <span class='muted'>free " + z.free +
+      " / reserved " + z.reserved + " / occupied " + z.occupied + " (of " + z.total + ")</span>";
+    const grid = document.createElement("div");
+    grid.className = "grid";
+    for (const s of z.spots) {
+      const b = document.createElement("button");
+      b.className = "spot " + s.status;
+      b.textContent = s.code;
+      b.title = s.name + " - " + s.status;
+      if (s.status === "FREE") b.onclick = () => reserve(s.code);
+      grid.appendChild(b);
+    }
+    card.appendChild(grid);
+    $("zones").appendChild(card);
+  }
+}
+
+function renderReservations(list, nowIso) {
+  const now = new Date(nowIso).getTime();
+  const rows = list.map((r) => {
+    const left = Math.max(0, Math.round((new Date(r.expires_at).getTime() - now) / 60000));
+    const button = r.status === "ACTIVE"
+      ? "<button class='act' data-id='" + r.id + "' data-a='entry'>Confirm entry</button>"
+      : "<button class='act' data-id='" + r.id + "' data-a='exit'>Register exit</button>";
+    return "<tr><td>" + r.user_code + "</td><td>" + r.spot_code + "</td><td>" + r.status + "</td><td>" +
+      (r.status === "ACTIVE" ? left : "-") + "</td><td>" + button + "</td></tr>";
+  });
+  $("res").innerHTML = rows.join("") || "<tr><td colspan='5' class='muted'>None</td></tr>";
+  document.querySelectorAll("button.act").forEach((b) => b.onclick = () => act(b.dataset.id, b.dataset.a));
+}
+
+async function refresh() {
+  try {
+    const [map, list] = await Promise.all([api("/api/map"), api("/api/reservations")]);
+    renderMap(map);
+    renderReservations(list, map.simulated_time);
+  } catch (e) { say("Connection problem: " + e.message, "err"); }
+}
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>
