@@ -5,12 +5,13 @@ from datetime import datetime
 from typing import List, Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
-from parking.domain.entities import Reservation, ReservationStatus, Spot, SpotStatus
-from parking.domain.errors import ReservationNotFound, SpotNotFound
-from parking.domain.ports import ReservationRepository, SpotRepository, UnitOfWork
-from parking.infrastructure.sql_models import ReservationModel, SpotModel
+from parking.domain.entities import Reservation, ReservationStatus, Spot, SpotStatus, User
+from parking.domain.errors import ReservationNotFound, SpotNotFound, UsernameTaken
+from parking.domain.ports import ReservationRepository, SpotRepository, UnitOfWork, UserRepository
+from parking.infrastructure.sql_models import ReservationModel, SpotModel, UserModel
 
 _OPEN = (ReservationStatus.ACTIVE.value, ReservationStatus.CONFIRMED.value)
 
@@ -135,3 +136,24 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
 
     def commit(self) -> None:
         self._session.commit()
+
+
+class SqlUserRepository(UserRepository):
+    """Short sessions of its own (users are not part of the reservation transaction)."""
+
+    def __init__(self, session_factory: "sessionmaker[Session]") -> None:
+        self._session_factory = session_factory
+
+    def add(self, user: User) -> None:
+        with self._session_factory() as session:
+            session.add(UserModel(username=user.username, password_hash=user.password_hash))
+            try:
+                session.commit()
+            except IntegrityError as exc:  # primary key = username
+                session.rollback()
+                raise UsernameTaken("Username is already taken") from exc
+
+    def get_by_username(self, username: str) -> Optional[User]:
+        with self._session_factory() as session:
+            model = session.get(UserModel, username)
+            return User(username=model.username, password_hash=model.password_hash) if model else None

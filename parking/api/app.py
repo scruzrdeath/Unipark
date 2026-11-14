@@ -5,18 +5,24 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from fastapi import APIRouter, FastAPI, Query, Request
+from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from parking.api.schemas import (
+    CredentialsRequest,
     DataPageOut,
     OccupancyMapOut,
     ReservationOut,
     ReserveRequest,
+    TokenOut,
+    UserOut,
     ZoneOut,
 )
+from parking.application.auth_service import AuthService
 from parking.application.container import Services
 from parking.domain import errors
+from parking.domain.entities import User
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -32,6 +38,19 @@ _STATUS = {
     errors.UserAlreadyHasReservation: 409,
     errors.InvalidTransition: 409,
     errors.ReservationExpired: 410,
+    errors.InvalidCredentials: 401,
+    errors.InvalidToken: 401,
+    errors.Forbidden: 403,
+    errors.UsernameTaken: 409,
+    errors.WeakPassword: 400,
+    errors.TooManyAttempts: 429,
+}
+
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
 }
 
 
@@ -53,39 +72,81 @@ def create_app(
     @app.exception_handler(errors.DomainError)
     async def domain_error_handler(_: Request, exc: errors.DomainError):
         status = next((code for cls, code in _STATUS.items() if isinstance(exc, cls)), 400)
-        return JSONResponse(status_code=status, content={"detail": str(exc)})
+        headers = {"WWW-Authenticate": "Bearer"} if status == 401 else None
+        return JSONResponse(status_code=status, content={"detail": str(exc)}, headers=headers)
+
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):
+        response = await call_next(request)
+        for name, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
+        return response
+
+    bearer = HTTPBearer(auto_error=False, description="Paste the access_token returned by /api/auth/login")
+
+    def auth_service() -> AuthService:
+        if services.auth is None:
+            raise errors.InvalidToken("Authentication is not configured")
+        return services.auth
+
+    def current_token(credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer)) -> str:
+        if credentials is None or credentials.scheme.lower() != "bearer":
+            raise errors.InvalidToken("Missing bearer token")
+        return credentials.credentials
+
+    def current_user(token: str = Depends(current_token)) -> User:
+        return auth_service().authenticate(token)
 
     router = APIRouter(prefix="/api")
 
-    @router.get("/map", response_model=OccupancyMapOut, summary="Real-time occupancy map")
-    def occupancy_map():
+    @router.post("/auth/register", response_model=UserOut, status_code=201, tags=["auth"],
+                 summary="Create an account (password stored with BCrypt)")
+    def register(body: CredentialsRequest):
+        return UserOut(username=auth_service().register(body.username, body.password).username)
+
+    @router.post("/auth/login", response_model=TokenOut, tags=["auth"],
+                 summary="Log in and get a JWT access token")
+    def login(body: CredentialsRequest):
+        return TokenOut(access_token=auth_service().login(body.username, body.password))
+
+    @router.post("/auth/logout", status_code=204, tags=["auth"],
+                 summary="Log out: the token is revoked and stops working")
+    def logout(token: str = Depends(current_token)):
+        auth_service().logout(token)
+
+    @router.get("/auth/me", response_model=UserOut, tags=["auth"], summary="Current user")
+    def me(user: User = Depends(current_user)):
+        return UserOut(username=user.username)
+
+    @router.get("/map", response_model=OccupancyMapOut, summary="Real-time occupancy map (requires login)")
+    def occupancy_map(user: User = Depends(current_user)):
         return OccupancyMapOut(
             simulated_time=services.occupancy.now(),
             zones=[ZoneOut.of(z) for z in services.occupancy.get_map()],
         )
 
-    @router.get("/reservations", response_model=List[ReservationOut], summary="Open reservations")
-    def list_open_reservations():
-        return [ReservationOut.of(r) for r in services.reservations.list_open()]
+    @router.get("/reservations", response_model=List[ReservationOut], summary="My open reservations")
+    def list_open_reservations(user: User = Depends(current_user)):
+        return [ReservationOut.of(r) for r in services.reservations.list_open(user.username)]
 
     @router.post("/reservations", response_model=ReservationOut, status_code=201,
                  summary="Reserve a free spot")
-    def reserve(body: ReserveRequest):
-        return ReservationOut.of(services.reservations.reserve(body.user_code, body.spot_code))
+    def reserve(body: ReserveRequest, user: User = Depends(current_user)):
+        return ReservationOut.of(services.reservations.reserve(user.username, body.spot_code))
 
     @router.get("/reservations/{reservation_id}", response_model=ReservationOut)
-    def get_reservation(reservation_id: str):
-        return ReservationOut.of(services.reservations.get(reservation_id))
+    def get_reservation(reservation_id: str, user: User = Depends(current_user)):
+        return ReservationOut.of(services.reservations.get(reservation_id, requested_by=user.username))
 
     @router.post("/reservations/{reservation_id}/entry", response_model=ReservationOut,
                  summary="Confirm vehicle entry")
-    def confirm_entry(reservation_id: str):
-        return ReservationOut.of(services.access.confirm_entry(reservation_id))
+    def confirm_entry(reservation_id: str, user: User = Depends(current_user)):
+        return ReservationOut.of(services.access.confirm_entry(reservation_id, requested_by=user.username))
 
     @router.post("/reservations/{reservation_id}/exit", response_model=ReservationOut,
                  summary="Register vehicle exit (frees the spot)")
-    def register_exit(reservation_id: str):
-        return ReservationOut.of(services.access.register_exit(reservation_id))
+    def register_exit(reservation_id: str, user: User = Depends(current_user)):
+        return ReservationOut.of(services.access.register_exit(reservation_id, requested_by=user.username))
 
     def open_data():
         if services.open_data is None:

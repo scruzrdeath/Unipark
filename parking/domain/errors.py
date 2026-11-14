@@ -43,3 +43,27 @@ class UnknownDataSource(DomainError):
 
 class InvalidQuery(DomainError):
     pass
+
+
+class InvalidCredentials(DomainError):
+    """Wrong username or password (the message never says which one)."""
+
+
+class InvalidToken(DomainError):
+    """Missing, malformed, expired or revoked token."""
+
+
+class UsernameTaken(DomainError):
+    pass
+
+
+class WeakPassword(DomainError):
+    pass
+
+
+class Forbidden(DomainError):
+    """Authenticated user trying to touch someone else's resource."""
+
+
+class TooManyAttempts(DomainError):
+    pass

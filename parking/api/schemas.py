@@ -12,8 +12,22 @@ from parking.domain.entities import Reservation, Spot
 
 
 class ReserveRequest(BaseModel):
-    user_code: str = Field(min_length=1, max_length=40, examples=["u1001"])
+    """The user is taken from the access token, never from the request body."""
     spot_code: str = Field(min_length=1, max_length=20, examples=["A-01"])
+
+
+class CredentialsRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=40, examples=["ana"])
+    password: str = Field(min_length=1, max_length=200, examples=["secret123"])
+
+
+class TokenOut(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserOut(BaseModel):
+    username: str  # the password hash is never exposed
 
 
 class ReservationOut(BaseModel):

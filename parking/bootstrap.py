@@ -1,10 +1,13 @@
 """Composition root: the only place that knows every layer and wires them together."""
 from __future__ import annotations
 
+import logging
+import secrets
 from datetime import timedelta
 from typing import Optional
 
 from parking.api.app import create_app
+from parking.application.auth_service import AuthService
 from parking.application.cache import TTLCache
 from parking.application.container import Services
 from parking.application.open_data_service import OpenDataService
@@ -17,7 +20,10 @@ from parking.application.services import (
 from parking.infrastructure.clock import SimulatedClock
 from parking.infrastructure.config import Settings
 from parking.infrastructure.seed import seed_spots
+from parking.infrastructure.security import InMemoryTokenDenylist, JwtTokenService
 from parking.infrastructure.simulation import RandomProbe, SimulationRunner
+
+log = logging.getLogger(__name__)
 
 
 def build_services(settings: Settings):
@@ -26,7 +32,7 @@ def build_services(settings: Settings):
         from sqlalchemy.orm import sessionmaker
 
         from parking.infrastructure.sql_models import Base
-        from parking.infrastructure.sql_repositories import SqlAlchemyUnitOfWork
+        from parking.infrastructure.sql_repositories import SqlAlchemyUnitOfWork, SqlUserRepository
 
         engine = create_engine(settings.database_url, pool_pre_ping=True)
         Base.metadata.create_all(engine)
@@ -34,10 +40,13 @@ def build_services(settings: Settings):
 
         def uow_factory():
             return SqlAlchemyUnitOfWork(session_factory)
+
+        user_repository = SqlUserRepository(session_factory)
     else:
-        from parking.infrastructure.in_memory import InMemoryStore
+        from parking.infrastructure.in_memory import InMemoryStore, InMemoryUserRepository
 
         uow_factory = InMemoryStore().uow_factory
+        user_repository = InMemoryUserRepository()
 
     seed_spots(uow_factory)
     clock = SimulatedClock(speed=settings.clock_speed)
@@ -57,12 +66,26 @@ def build_services(settings: Settings):
         cache=TTLCache(settings.cache_ttl_seconds),
     )
 
+    from parking.infrastructure.bcrypt_hasher import BcryptPasswordHasher
+
+    secret = settings.jwt_secret
+    if not secret or secret.startswith("change-me"):  # missing, or the placeholder from .env.example
+        secret = secrets.token_urlsafe(48)
+        log.warning("JWT_SECRET is not set: using a random secret. Tokens stop working on restart.")
+    auth = AuthService(
+        users=user_repository,
+        hasher=BcryptPasswordHasher(),
+        tokens=JwtTokenService(secret, settings.jwt_minutes),
+        denylist=InMemoryTokenDenylist(),
+    )
+
     services = Services(
         reservations=ReservationService(uow_factory, clock, ttl),
         access=AccessService(uow_factory, clock),
         sensors=SensorService(uow_factory, RandomProbe()),
         occupancy=OccupancyService(uow_factory, clock),
         open_data=open_data,
+        auth=auth,
     )
     runner: Optional[SimulationRunner] = None
     if settings.simulation_enabled:

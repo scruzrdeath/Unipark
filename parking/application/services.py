@@ -3,14 +3,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 
 from parking.domain.entities import Reservation, Spot, SpotStatus
 from parking.domain.errors import (
+    Forbidden,
     ReservationExpired,
     UserAlreadyHasReservation,
 )
 from parking.domain.ports import Clock, OccupancyProbe, UnitOfWorkFactory
+
+
+def _ensure_owner(reservation: Reservation, requested_by: Optional[str]) -> None:
+    """Object-level authorization: a user can only act on their own reservations."""
+    if requested_by is not None and reservation.user_code != requested_by:
+        raise Forbidden("This reservation belongs to another user")
 
 
 class ReservationService:
@@ -34,13 +41,16 @@ class ReservationService:
             uow.commit()
             return reservation
 
-    def get(self, reservation_id: str) -> Reservation:
+    def get(self, reservation_id: str, requested_by: Optional[str] = None) -> Reservation:
         with self._uow_factory() as uow:
-            return uow.reservations.get(reservation_id)
+            reservation = uow.reservations.get(reservation_id)
+            _ensure_owner(reservation, requested_by)
+            return reservation
 
-    def list_open(self) -> List[Reservation]:
+    def list_open(self, user_code: Optional[str] = None) -> List[Reservation]:
         with self._uow_factory() as uow:
-            return uow.reservations.list_open()
+            items = uow.reservations.list_open()
+        return [r for r in items if user_code is None or r.user_code == user_code]
 
     def expire_overdue(self) -> int:
         """Expire ACTIVE reservations whose time is over and free their spots."""
@@ -70,11 +80,12 @@ class AccessService:
         self._uow_factory = uow_factory
         self._clock = clock
 
-    def confirm_entry(self, reservation_id: str) -> Reservation:
+    def confirm_entry(self, reservation_id: str, requested_by: Optional[str] = None) -> Reservation:
         now = self._clock.now()
         expired = False
         with self._uow_factory() as uow:
             reservation = uow.reservations.get(reservation_id, for_update=True)
+            _ensure_owner(reservation, requested_by)
             spot = uow.spots.get_by_code(reservation.spot_code, for_update=True)
             if reservation.is_overdue(now):
                 reservation.expire()
@@ -94,10 +105,11 @@ class AccessService:
             raise ReservationExpired("Reservation time is over; the spot was released")
         raise AssertionError("unreachable")
 
-    def register_exit(self, reservation_id: str) -> Reservation:
+    def register_exit(self, reservation_id: str, requested_by: Optional[str] = None) -> Reservation:
         now = self._clock.now()
         with self._uow_factory() as uow:
             reservation = uow.reservations.get(reservation_id, for_update=True)
+            _ensure_owner(reservation, requested_by)
             spot = uow.spots.get_by_code(reservation.spot_code, for_update=True)
             reservation.complete(now)
             spot.release()

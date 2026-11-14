@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from parking.application.auth_service import AuthService
 from parking.application.open_data_service import OpenDataService
 from parking.application.services import (
     AccessService,
@@ -18,3 +19,4 @@ class Services:
     sensors: SensorService
     occupancy: OccupancyService
     open_data: Optional[OpenDataService] = None
+    auth: Optional[AuthService] = None

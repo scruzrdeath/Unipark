@@ -105,3 +105,9 @@ class Reservation:
         if self.status is not ReservationStatus.ACTIVE:
             raise InvalidTransition(f"Reservation is {self.status.value}")
         self.status = ReservationStatus.EXPIRED
+
+
+@dataclass
+class User:
+    username: str          # normalized: lowercase, unique, also used as reservation user_code
+    password_hash: str     # never the plain password

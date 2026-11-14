@@ -36,6 +36,12 @@ Without `DATABASE_URL` the app runs with an in-memory store (handy for a quick d
 - Sensors (one background thread) skip RESERVED spots and spots of a confirmed reservation.
 - Exit frees the spot; unused reservations expire and free the spot.
 
+## Security (modules 13 and 14)
+- Accounts: `POST /api/auth/register`, `POST /api/auth/login` (JWT), `POST /api/auth/logout` (token revoked), `GET /api/auth/me`.
+- Passwords hashed with BCrypt; JWT secret from `JWT_SECRET`.
+- The web page opens on a login/register screen; the map (`/api/map`) and reservations require a token. Registering signs the user in automatically. Only open-data endpoints stay public.
+- See `docs/calidad-y-seguridad.md` (SonarCloud, mutation testing, GitHub Advanced Security) and `docs/owasp-checklist.md`.
+
 ## Not yet (out of scope for v1)
 Stress test, hourly statistics, sensor-vs-reservation conflict handling.
 

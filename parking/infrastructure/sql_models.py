@@ -32,3 +32,10 @@ class ReservationModel(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     entered_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     exited_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
+class UserModel(Base):
+    __tablename__ = "users"
+
+    username: Mapped[str] = mapped_column(String(40), primary_key=True)
+    password_hash: Mapped[str] = mapped_column(String(100), nullable=False)

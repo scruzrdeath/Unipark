@@ -5,10 +5,11 @@ Adapters live in ``parking.infrastructure``. Dependencies point INTO the domain.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-from parking.domain.entities import Reservation, Spot
+from parking.domain.entities import Reservation, Spot, User
 
 
 class Clock(ABC):
@@ -101,3 +102,46 @@ class DataAnalyzer(ABC):
         """Optionally keep only rows where ``filter_column`` equals ``filter_value``.
 
         Raise InvalidQuery if a column does not exist."""
+
+
+class UserRepository(ABC):
+    @abstractmethod
+    def add(self, user: User) -> None:
+        """Raise UsernameTaken if the username already exists."""
+
+    @abstractmethod
+    def get_by_username(self, username: str) -> Optional[User]: ...
+
+
+class PasswordHasher(ABC):
+    @abstractmethod
+    def hash(self, password: str) -> str: ...
+
+    @abstractmethod
+    def verify(self, password: str, password_hash: str) -> bool: ...
+
+
+@dataclass(frozen=True)
+class TokenClaims:
+    subject: str
+    token_id: str
+    expires_at: float      # epoch seconds
+
+
+class TokenService(ABC):
+    @abstractmethod
+    def issue(self, subject: str) -> str: ...
+
+    @abstractmethod
+    def decode(self, token: str) -> TokenClaims:
+        """Raise InvalidToken when the token is invalid or expired."""
+
+
+class TokenDenylist(ABC):
+    """Revoked tokens (logout). Entries only need to live until the token expires."""
+
+    @abstractmethod
+    def revoke(self, token_id: str, expires_at: float) -> None: ...
+
+    @abstractmethod
+    def is_revoked(self, token_id: str) -> bool: ...

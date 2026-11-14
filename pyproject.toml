@@ -1,0 +1,11 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["parking"]
+branch = true
+
+[tool.mutmut]
+# Mutation testing only on the business logic (domain + application)
+paths_to_mutate = ["parking/domain/", "parking/application/"]
+tests_dir = ["tests/"]

@@ -5,8 +5,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent / "parking"
 
 FORBIDDEN = {
-    "domain": ("parking.application", "parking.infrastructure", "parking.api", "fastapi", "sqlalchemy"),
-    "application": ("parking.infrastructure", "parking.api", "fastapi", "sqlalchemy"),
+    "domain": ("parking.application", "parking.infrastructure", "parking.api", "fastapi", "sqlalchemy", "bcrypt", "jwt"),
+    "application": ("parking.infrastructure", "parking.api", "fastapi", "sqlalchemy", "bcrypt", "jwt"),
     "api": ("parking.infrastructure", "sqlalchemy"),
     "infrastructure": ("parking.api",),
 }

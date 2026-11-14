@@ -17,6 +17,8 @@ class Settings:
     soda_app_token: Optional[str] = None
     http_timeout: float = 10.0
     cache_ttl_seconds: float = 300.0
+    jwt_secret: Optional[str] = None   # required in production; random per start if missing
+    jwt_minutes: int = 30
 
     @staticmethod
     def from_env() -> "Settings":
@@ -28,4 +30,6 @@ class Settings:
             soda_app_token=os.environ.get("SODA_APP_TOKEN") or None,
             http_timeout=float(os.environ.get("HTTP_TIMEOUT", "10")),
             cache_ttl_seconds=float(os.environ.get("CACHE_TTL_SECONDS", "300")),
+            jwt_secret=os.environ.get("JWT_SECRET") or None,
+            jwt_minutes=int(os.environ.get("JWT_MINUTES", "30")),
         )

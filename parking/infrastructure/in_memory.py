@@ -6,12 +6,13 @@ import threading
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from parking.domain.entities import Reservation, Spot
-from parking.domain.errors import ReservationNotFound, SpotNotFound
+from parking.domain.entities import Reservation, Spot, User
+from parking.domain.errors import ReservationNotFound, SpotNotFound, UsernameTaken
 from parking.domain.ports import (
     ReservationRepository,
     SpotRepository,
     UnitOfWork,
+    UserRepository,
 )
 
 
@@ -94,3 +95,20 @@ class InMemoryUnitOfWork(UnitOfWork):
 
     def commit(self) -> None:
         pass
+
+
+class InMemoryUserRepository(UserRepository):
+    def __init__(self) -> None:
+        self._users: Dict[str, User] = {}
+        self._lock = threading.Lock()
+
+    def add(self, user: User) -> None:
+        with self._lock:
+            if user.username in self._users:
+                raise UsernameTaken("Username is already taken")
+            self._users[user.username] = copy.deepcopy(user)
+
+    def get_by_username(self, username: str) -> Optional[User]:
+        with self._lock:
+            user = self._users.get(username)
+            return copy.deepcopy(user) if user else None
